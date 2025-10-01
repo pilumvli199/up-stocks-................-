@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Option Chain poller (updated robust version)
+Option Chain poller (robust, single-file)
 
 - Improved fetch_quotes_for_instrument_keys parsing (handles multiple response shapes)
-- Better find_underlying_key
+- find_underlying_key improved
+- resolve_option_instruments_for included (was missing)
 - Rotation, batching, 429-aware retries and diagnostic snippets
 - Configure with .env (or environment variables)
 """
@@ -141,6 +142,50 @@ def ms_to_ymd(ms):
     except Exception:
         return None
 
+# ---------- resolve_option_instruments_for (ADDED) ----------
+def resolve_option_instruments_for(instruments, underlying_term, expiry_yyyy_mm_dd):
+    """
+    Return list of instrument rows (dicts) that are option strikes for underlying_term and expiry.
+    Filters by segment NSE_FO and expiry date; looks for 'ce'/'pe' naming in tradingsymbol/name.
+    """
+    term = underlying_term.strip().lower()
+    out = []
+    for row in instruments:
+        if not isinstance(row, dict):
+            continue
+        seg = (row.get("segment") or row.get("exchangeSegment") or "").upper()
+        # we expect options in FO segment
+        if "FO" not in seg and "FUT" not in seg and "NSE_FO" not in seg:
+            # allow NSE_INDEX option rows too if instruments file encodes index options differently
+            # continue
+            pass
+        exp = row.get("expiry") or row.get("expiry_date") or row.get("expiryTimestamp") or row.get("expiry_ts")
+        if not exp:
+            continue
+        exp_ymd = None
+        if isinstance(exp, (int, float)):
+            exp_ymd = ms_to_ymd(exp)
+        else:
+            try:
+                exp_ymd = str(exp).split("T")[0]
+            except:
+                exp_ymd = None
+        if exp_ymd != expiry_yyyy_mm_dd:
+            continue
+        name = str(row.get("name","")).lower()
+        ts = str(row.get("tradingsymbol") or row.get("trading_symbol") or row.get("symbol") or "").lower()
+        # check underlying term presence and CE/PE marker
+        if term in name or term in ts:
+            if (" ce " in ts) or (" pe " in ts) or ts.strip().endswith("ce") or ts.strip().endswith("pe") or "call" in ts or "put" in ts:
+                out.append(row)
+    # sort by strike numeric
+    def _strike_key(r):
+        try:
+            return float(r.get("strike_price") or r.get("strike") or 0)
+        except:
+            return 0
+    return sorted(out, key=_strike_key)
+
 # ---------- REPLACED/IMPROVED HELPERS ----------
 
 def find_underlying_key(instruments, term):
@@ -175,7 +220,6 @@ def find_underlying_key(instruments, term):
             return c
     logging.debug("find_underlying_key: none found for term %s", term)
     return None
-
 
 def chunk_list(lst, n):
     for i in range(0, len(lst), n):
@@ -277,7 +321,7 @@ def fetch_quotes_for_instrument_keys(instrument_keys):
                           len(missing), ", ".join(missing[:5]), last_response_text)
     return out
 
-# ---------- Option chain builders (unchanged logic with helpers) ----------
+# ---------- Option chain builders ----------
 
 def build_option_chain_from_instruments(instrument_rows, quotes_map):
     strikes = {}
