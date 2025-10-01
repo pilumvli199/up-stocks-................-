@@ -1,0 +1,9 @@
+// Placeholder - obtain actual MarketData.proto from Upstox docs.
+// Save the real proto as MarketData.proto and run:
+// protoc --python_out=. MarketData.proto
+// This file is intentionally a placeholder to remind you to fetch the real proto.
+syntax = "proto3";
+package upstox.market;
+message FeedResponse {
+  // real fields here...
+}
